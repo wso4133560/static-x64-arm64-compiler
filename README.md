@@ -39,6 +39,70 @@ Example:
 ./build/server/instrew -profile -targetopt=0 /bin/ls -l
 ```
 
+### Static Binary Translator (instrew-aot)
+
+In addition to the dynamic translator, this project includes a **static AOT binary translator** that converts x86-64 ELF binaries into standalone AArch64 ELF executables. The output binary runs natively on AArch64 without requiring the translator at runtime.
+
+#### Building
+
+```
+mkdir build
+meson build -Dbuildtype=release
+ninja -C build
+```
+
+The `instrew-aot` binary will be at `./build/static-translator/instrew-aot`.
+
+#### Usage
+
+```
+# Translate an x86-64 binary to a standalone AArch64 ELF
+./build/static-translator/instrew-aot -o output.aarch64 /path/to/x86_64_binary
+
+# Run the translated binary directly on AArch64
+chmod +x output.aarch64
+./output.aarch64
+```
+
+Options:
+
+- `-o <file>`: Output AArch64 ELF path (default: `a.out.aarch64`)
+- `-r`: Run translated code in-process instead of producing an ELF (self-test mode)
+- `-v`: Verbose output (shows each translation step, compilation commands, etc.)
+- `-h`: Show help
+
+#### Examples
+
+```bash
+# Prepare a simple x86-64 test binary (statically linked, no libc)
+clang-18 --target=x86_64-linux-gnu -nostdlib -static -fuse-ld=lld-18 -o test test.S
+
+# Translate to AArch64 with verbose output
+./build/static-translator/instrew-aot -v -o test.aarch64 test
+
+# Run the result
+./test.aarch64
+
+# Self-test mode (run in-process without producing an ELF)
+./build/static-translator/instrew-aot -r test
+```
+
+#### Requirements
+
+- **Host**: AArch64 Linux
+- **Input**: Statically linked x86-64 ELF executables
+- **Build-time**: LLVM 18 development libraries, Rellume (included as subproject)
+- **Output linking**: `clang-18` and `lld-18` must be available in `PATH` (used at translation time to assemble and link the output ELF)
+
+#### How It Works
+
+1. **ELF Parsing** — Reads the x86-64 input binary's headers, segments, and symbols
+2. **Static Analysis** — Recovers the control flow graph, discovering basic blocks and functions
+3. **Batch Translation** — Lifts each basic block from x86-64 to LLVM IR via Rellume, then compiles to AArch64 relocatable objects (.o) using the LLVM AArch64 backend
+4. **ELF Output** — Generates glue assembly (`_start`, address table, syscall/cpuid trampolines), compiles the runtime support (syscall emulation, CPUID emulation), and links everything into a standalone static AArch64 ELF with `clang-18`/`lld-18` using `-nostdlib`
+
+The output binary contains an embedded dispatch loop that maps guest x86-64 addresses to translated AArch64 functions via binary search on a static address table. Syscalls are translated from x86-64 numbers to native AArch64 `svc` calls at runtime.
+
 ### Architecture
 
 Instrew implements a two-process client/server architecture: the light-weight client contains the guest address space as well as the code cache and controls execution, querying rewritten objects as necessary from the server. The server performs lifting (requesting instruction bytes from the client when required), instrumentation, and code generation and sends back an ELF object file. When receiving a new object file, the client resolves missing symbols and applies relocations.
