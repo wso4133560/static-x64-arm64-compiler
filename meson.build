@@ -50,4 +50,5 @@ librellume = rellume.get_variable('librellume')
 
 subdir('client')
 subdir('server')
+subdir('static-translator')
 subdir('test')
